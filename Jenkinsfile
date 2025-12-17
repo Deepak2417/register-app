@@ -4,112 +4,50 @@ pipeline {
         jdk 'Java17'
         maven 'Maven3'
     }
-    environment {
-	    APP_NAME = "register-app-pipeline"
-            RELEASE = "1.0.0"
-            DOCKER_USER = "ashfaque9x"
-            DOCKER_PASS = 'dockerhub'
-            IMAGE_NAME = "${DOCKER_USER}" + "/" + "${APP_NAME}"
-            IMAGE_TAG = "${RELEASE}-${BUILD_NUMBER}"
-	    JENKINS_API_TOKEN = credentials("JENKINS_API_TOKEN")
-    }
     stages{
         stage("Cleanup Workspace"){
-                steps {
+            steps {
                 cleanWs()
-                }
+            }
         }
-
         stage("Checkout from SCM"){
-                steps {
-                    git branch: 'main', credentialsId: 'github', url: 'https://github.com/Ashfaque-9x/register-app'
-                }
+            steps {
+                git branch: 'main', credentialsId: 'github', url: 'https://github.com/DevopsGuy1997/register-app.git'
+            }
         }
-
-        stage("Build Application"){
+        stage("Build & Unit Test"){
             steps {
-                sh "mvn clean package"
+                // Use 'mvn verify' which includes all phases up to test
+                sh "mvn clean verify" 
             }
-
-       }
-
-       stage("Test Application"){
-           steps {
-                 sh "mvn test"
-           }
-       }
-
-       stage("SonarQube Analysis"){
-           steps {
-	           script {
-		        withSonarQubeEnv(credentialsId: 'jenkins-sonarqube-token') { 
-                        sh "mvn sonar:sonar"
-		        }
-	           }	
-           }
-       }
-
-       stage("Quality Gate"){
-           steps {
-               script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'jenkins-sonarqube-token'
-                }	
-            }
-
         }
-
-        stage("Build & Push Docker Image") {
+        stage("Test Reporting & Archive"){
             steps {
-                script {
-                    docker.withRegistry('',DOCKER_PASS) {
-                        docker_image = docker.build "${IMAGE_NAME}"
-                    }
-
-                    docker.withRegistry('',DOCKER_PASS) {
-                        docker_image.push("${IMAGE_TAG}")
-                        docker_image.push('latest')
-                    }
-                }
+                echo "Publishing test results and archiving artifact..."
+                
+                // 1. Publish JUnit test results for Jenkins reporting
+                junit '**/target/surefire-reports/*.xml' 
+                
+                // 2. Archive the built application artifact (e.g., the JAR file)
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
-
-       }
-
-       stage("Trivy Scan") {
-           steps {
-               script {
-	            sh ('docker run -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image ashfaque9x/register-app-pipeline:latest --no-progress --scanners vuln  --exit-code 0 --severity HIGH,CRITICAL --format table')
-               }
-           }
-       }
-
-       stage ('Cleanup Artifacts') {
-           steps {
-               script {
-                    sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG}"
-                    sh "docker rmi ${IMAGE_NAME}:latest"
-               }
-          }
-       }
-
-       stage("Trigger CD Pipeline") {
+        }
+        stage("Deploy to Staging"){
             steps {
-                script {
-                    sh "curl -v -k --user clouduser:${JENKINS_API_TOKEN} -X POST -H 'cache-control: no-cache' -H 'content-type: application/x-www-form-urlencoded' --data 'IMAGE_TAG=${IMAGE_TAG}' 'ec2-13-232-128-192.ap-south-1.compute.amazonaws.com:8080/job/gitops-register-app-cd/buildWithParameters?token=gitops-token'"
-                }
+                // TODO: Replace this with your actual deployment logic
+                sh "echo 'Starting deployment of the archived artifact...'"
+                // Example: sh "scp target/*.jar user@staging-server:/opt/app/"
             }
-       }
+        }
     }
-
+    // Post-actions run after all stages, useful for cleanup or notifications
     post {
-       failure {
-             emailext body: '''${SCRIPT, template="groovy-html.template"}''', 
-                      subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - Failed", 
-                      mimeType: 'text/html',to: "ashfaque.s510@gmail.com"
-      }
-      success {
-            emailext body: '''${SCRIPT, template="groovy-html.template"}''', 
-                     subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - Successful", 
-                     mimeType: 'text/html',to: "ashfaque.s510@gmail.com"
-      }      
-   }
+        always {
+            echo "Pipeline finished. Status: ${currentBuild.result}"
+        }
+        failure {
+            // Optional: Send an email notification on failure
+            // mail to: 'devops-team@example.com', subject: "Pipeline Failed: ${env.JOB_NAME}"
+        }
+    }
 }
